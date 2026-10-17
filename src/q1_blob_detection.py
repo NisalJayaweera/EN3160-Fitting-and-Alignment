@@ -54,6 +54,8 @@ def main():
     parser.add_argument("--sigma-count", type=int, default=22)
     parser.add_argument("--threshold", type=float, default=0.025)
     parser.add_argument("--largest", type=int, default=10)
+    parser.add_argument("--color-filter", action="store_true", help="Filter candidates using nearby yellow pixels")
+    parser.add_argument("--yellow-fraction", type=float, default=0.12)
     args = parser.parse_args()
     if args.sigma_min <= 0 or args.sigma_max <= args.sigma_min or args.sigma_count < 3:
         parser.error("Choose 0 < sigma-min < sigma-max and sigma-count >= 3")
@@ -65,9 +67,25 @@ def main():
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     sigmas = np.linspace(args.sigma_min, args.sigma_max, args.sigma_count)
     blobs = suppress_overlaps(detect_blobs(gray, sigmas, args.threshold))
+    if args.color_filter and len(blobs):
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        yellow = cv2.inRange(hsv, (15, 70, 55), (40, 255, 255)) > 0
+        integral = cv2.integral(yellow.astype(np.uint8))
+        height, width = yellow.shape
+        filtered = []
+        for candidate in blobs:
+            x, y, sigma, _ = candidate
+            radius = max(4, int(round(np.sqrt(2) * sigma * 1.5)))
+            x0, x1 = max(0, int(x) - radius), min(width, int(x) + radius + 1)
+            y0, y1 = max(0, int(y) - radius), min(height, int(y) + radius + 1)
+            count = integral[y1, x1] - integral[y0, x1] - integral[y1, x0] + integral[y0, x0]
+            fraction = count / ((x1 - x0) * (y1 - y0))
+            if fraction >= args.yellow_fraction:
+                filtered.append(candidate)
+        blobs = np.asarray(filtered).reshape(-1, 4)
     blobs = blobs[np.argsort(-blobs[:, 2])] if len(blobs) else blobs
 
-    out = Path("results/q1")
+    out = Path("results/q1_filtered" if args.color_filter else "results/q1")
     out.mkdir(parents=True, exist_ok=True)
     with (out / "circles.csv").open("w", newline="") as file:
         writer = csv.writer(file)
